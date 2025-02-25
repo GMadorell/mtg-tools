@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Card Importer Tool</title>
+    <!-- Bootstrap 5 (CSS) -->
+    <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+    >
+    <style>
+        body {
+            background: #f8f9fa;
+        }
+
+        #cardsTableWrapper {
+            max-height: 300px; /* keep vertical scroll if table is tall */
+            overflow-y: auto; /* vertical scrollbar */
+            overflow-x: visible; /* allow horizontal content (the hover image) to overflow */
+            margin-top: 1rem;
+        }
+
+        .toast {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            min-width: 250px;
+            z-index: 1060; /* above typical modals */
+        }
+
+        /* Make quantity inputs narrower */
+        .qty-input {
+            width: 70px;
+        }
+
+        /* Vertically center the table cells */
+        .table td, .table th {
+            vertical-align: middle !important;
+        }
+
+        /* For the small icon + hover preview */
+        .card-image-wrapper {
+            position: relative;
+            display: inline-block;
+        }
+
+        .card-image-wrapper img {
+            vertical-align: middle;
+        }
+
+        .card-image-hover {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 40px;
+            z-index: 9999;
+            background-color: #fff;
+            border: 1px solid #ccc;
+            padding: 2px;
+        }
+
+        .card-image-wrapper:hover .card-image-hover {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container my-4">
+    <h1>Card Importer Tool</h1>
+    <p>
+        Enter a set code, followed by the collector number –
+        e.g. <code>kld247</code> or <code>khc082</code>.
+        <br>
+        For cards without set code and card number, switch the input mode to name and year.
+        <br>
+        Toggle foil/proxy if needed, adjust quantity, then press "Enter" or click "Add".
+        <br>
+        You can edit quantity/foil/proxy in the table. If quantity goes to 0, that row is removed.
+        If two rows become the same after editing (same set code, collector #, foil, and proxy), they will merge.
+        <br>
+        Prices are obtained from the Scryfall API. They correspond to the card's trending price in EUR.
+
+    </p>
+
+    <p>
+        <strong>Choose your input mode:</strong>
+        <span class="ms-2">
+      <input type="radio" name="modeToggle" id="modeSetNumber" value="setNumber" checked>
+      <label for="modeSetNumber" class="me-3">Set + Number</label>
+
+      <input type="radio" name="modeToggle" id="modeNameYear" value="nameYear">
+      <label for="modeNameYear">Name + Year</label>
+    </span>
+    </p>
+
+    <!-- MODE A: Set + Number row -->
+    <div id="setNumberRow" class="row g-2 align-items-end">
+        <div class="col-sm-4">
+            <label for="setNumberInput" class="form-label">Set Code + Number</label>
+            <input
+                    type="text"
+                    class="form-control"
+                    id="setNumberInput"
+                    placeholder="e.g. kld247"
+            >
+        </div>
+    </div>
+
+    <!-- MODE B: Name + Year row -->
+    <div id="nameYearRow" class="row g-2 align-items-end" style="display: none;">
+        <div class="col-sm-4">
+            <label for="cardNameInput" class="form-label">Card Name</label>
+            <input
+                    type="text"
+                    class="form-control"
+                    id="cardNameInput"
+                    placeholder="e.g. Reliquary Tower"
+            >
+        </div>
+        <div class="col-sm-2">
+            <label for="yearInput" class="form-label">Year (optional)</label>
+            <input
+                    type="number"
+                    class="form-control"
+                    id="yearInput"
+                    placeholder="e.g. 2012"
+            >
+        </div>
+    </div>
+
+    <!-- Shared row for quantity & add button -->
+    <div class="row g-2 align-items-end mt-2">
+        <div class="col-sm-1">
+            <label for="cardQty" class="form-label">Quantity</label>
+            <input
+                    type="number"
+                    class="form-control"
+                    id="cardQty"
+                    value="1"
+                    min="1"
+            >
+        </div>
+        <div class="col-sm-2">
+            <button class="btn btn-primary w-100" id="addCardBtn">
+                Add Card
+            </button>
+        </div>
+    </div>
+
+    <div class="row g-2 align-items-end">
+        <!-- Foil Toggle -->
+        <div class="col-sm-1">
+            <div class="form-check form-switch mt-4">
+                <input class="form-check-input" type="checkbox" id="foilToggle">
+                <label class="form-check-label" for="foilToggle">Foil?</label>
+            </div>
+        </div>
+        <!-- Proxy Toggle -->
+        <div class="col-sm-1">
+            <div class="form-check form-switch mt-4">
+                <input class="form-check-input" type="checkbox" id="proxyToggle">
+                <label class="form-check-label" for="proxyToggle">Proxy?</label>
+            </div>
+        </div>
+        <!-- Lock Edition Toggle -->
+        <div class="col-sm-2">
+            <div class="form-check form-switch mt-4">
+                <input class="form-check-input" type="checkbox" id="lockEditionToggle">
+                <label class="form-check-label" for="lockEditionToggle">Lock Edition?</label>
+            </div>
+        </div>
+    </div>
+
+    <button class="btn btn-success mt-3" id="exportCsvBtn">
+        Export to Moxfield CSV
+    </button>
+
+    <div id="cardsTableWrapper">
+        <table class="table table-striped mt-3" id="cardsTable">
+            <thead>
+            <tr>
+                <th>Qty</th>
+                <th>Card Name</th>
+                <th>Set Code</th>
+                <th>Coll #</th>
+                <th>Foil?</th>
+                <th>Proxy?</th>
+                <th>
+                    <span>Unit&nbsp;Price&nbsp;(€)</span>
+                </th>
+                <th>Total Price (€)</th>
+                <th>CM</th> <!-- Column for cardmarket link icon -->
+            </tr>
+            </thead>
+            <tbody>
+            <!-- Rows appended here -->
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Aggregated total price & total card count -->
+    <div class="mt-3">
+        <strong>Total Cards:</strong>
+        <span id="totalCards">0</span>
+        &nbsp;&nbsp;|&nbsp;&nbsp;
+        <strong>Total Price (€):</strong>
+        <span id="grandTotal">0.00</span>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div id="toastContainer" class="toast align-items-center text-bg-danger border-0" style="display:none;">
+    <div class="d-flex">
+        <div class="toast-body" id="toastMessage"></div>
+        <button
+                type="button"
+                class="btn-close btn-close-white me-2 m-auto"
+                aria-label="Close"
+                onclick="hideToast()"
+        ></button>
+    </div>
+</div>
+
+<!-- Bootstrap + Dependencies -->
+<script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
+<script
+        src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
+></script>
+
+<script>
+    ////////////////////////////////////////////////////////////////////////////////
+    // 1) Aggregator Logic
+    ////////////////////////////////////////////////////////////////////////////////
+
+    const bySignature = new Map();
+    let popupImageEl = null; // global <img> for large hover previews
+
+    function showToast(msg) {
+        const toastEl = document.getElementById("toastContainer");
+        document.getElementById("toastMessage").textContent = msg;
+        toastEl.style.display = "block";
+    }
+
+    function hideToast() {
+        document.getElementById("toastContainer").style.display = "none";
+    }
+
+    function makeSignature({edition, collector_number, foil, proxy}) {
+        const foilPart = foil ? "1" : "0";
+        const proxyPart = proxy ? "1" : "0";
+        return `${(edition || "").toUpperCase()}_${collector_number}_${foilPart}_${proxyPart}`;
+    }
+
+    // Figures out the final unit price (foil vs nonfoil)
+    function getCardPrice(cardObj) {
+        return cardObj.foil ? cardObj.eurFoil : cardObj.eurNonFoil;
+    }
+
+    // Update "Unit Price" & "Total Price" in row
+    function updateRowPrices(cardObj, tr) {
+        const unitPriceCell = tr.querySelector(".unit-price-cell");
+        const totalPriceCell = tr.querySelector(".total-price-cell");
+        const price = getCardPrice(cardObj);
+        const total = price * cardObj.count;
+        unitPriceCell.textContent = price.toFixed(2);
+        totalPriceCell.textContent = total.toFixed(2);
+    }
+
+    function updateGrandTotal() {
+        let sumPrice = 0, sumCount = 0;
+        for (const {card} of bySignature.values()) {
+            sumPrice += getCardPrice(card) * card.count;
+            sumCount += card.count;
+        }
+        document.getElementById("grandTotal").textContent = sumPrice.toFixed(2);
+        document.getElementById("totalCards").textContent = sumCount;
+    }
+
+    // Create or merge a row in the table
+    function addOrMergeCard(cardObj) {
+        const sig = makeSignature(cardObj);
+        if (bySignature.has(sig)) {
+            const entry = bySignature.get(sig);
+            entry.card.count += cardObj.count;
+            // update the input
+            const qtyInput = entry.row.querySelector(".qty-input");
+            const oldVal = parseInt(qtyInput.value, 10);
+            qtyInput.value = oldVal + cardObj.count;
+            updateRowPrices(entry.card, entry.row);
+        } else {
+            const row = createTableRow(cardObj);
+            bySignature.set(sig, {card: cardObj, row});
+        }
+        updateGrandTotal();
+    }
+
+    function parseSetNumberInput(raw) {
+        const trimmed = raw.trim();
+        if (!trimmed) {
+            throw new Error("Empty input for set+number.");
+        }
+
+        // If there's a space, parse left as set code, right as collector number
+        const spaceIndex = trimmed.indexOf(" ");
+        if (spaceIndex >= 0) {
+            const setCodePart = trimmed.slice(0, spaceIndex).toUpperCase();
+            const numberPart = trimmed.slice(spaceIndex + 1);
+            const numVal = parseInt(numberPart, 10);
+
+            if (!setCodePart || isNaN(numVal) || numVal <= 0) {
+                throw new Error(`Could not parse set+number from: "${trimmed}"`);
+            }
+            return {
+                setCode: setCodePart,
+                collectorNumber: String(numVal),
+            };
+        }
+
+        // No space => try to gather 4 non-digit chars from the start
+        //  If we can gather 4, that becomes the set code. The rest is the collector number.
+        //  "Non-digit" means /[^0-9]/.
+        let nonDigitCount = 0;
+        let i = 0;
+        for (; i < trimmed.length && nonDigitCount < 4; i++) {
+            if (/\D/.test(trimmed[i])) {
+                nonDigitCount++;
+            }
+        }
+        // If we successfully found 4 non-digits:
+        if (nonDigitCount === 4) {
+            const setCodePart = trimmed.slice(0, i).toUpperCase(); // up through index i
+            const numberPart = trimmed.slice(i);                   // rest of the string
+            const numVal = parseInt(numberPart, 10);
+            if (isNaN(numVal) || numVal <= 0) {
+                throw new Error(`Invalid collector number in: "${trimmed}"`);
+            }
+            return {
+                setCode: setCodePart,
+                collectorNumber: String(numVal),
+            };
+        }
+
+        // Otherwise, fallback to first 3 chars => set code, rest => collector number
+        if (trimmed.length < 4) {
+            throw new Error(`Not enough length to parse set+number from: "${trimmed}"`);
+        }
+        const setCode3 = trimmed.slice(0, 3).toUpperCase();
+        const numberRest = trimmed.slice(3);
+        const numVal2 = parseInt(numberRest, 10);
+        if (isNaN(numVal2) || numVal2 <= 0) {
+            throw new Error(`Invalid collector number in: "${trimmed}"`);
+        }
+
+        return {
+            setCode: setCode3,
+            collectorNumber: String(numVal2),
+        };
+    }
+
+    function createTableRow(cardObj) {
+        const tbody = document.querySelector("#cardsTable tbody");
+        const tr = document.createElement("tr");
+        const sig = makeSignature(cardObj);
+        tr.dataset.sig = sig;
+
+        // We'll embed just the small image + card name in the cell.
+        const smallArtUrl = cardObj.artCropUrl || "";
+        const normalUrl = cardObj.normalUrl || "";
+        const cardName = cardObj.name || "Unknown Card";
+
+        // Name column
+        const nameTd = document.createElement("td");
+        if (!smallArtUrl) {
+            // no art => text only
+            nameTd.textContent = cardName;
+        } else {
+            // create a small thumb + text
+            const wrapSpan = document.createElement("span");
+            const thumbImg = document.createElement("img");
+            thumbImg.src = smallArtUrl;
+            thumbImg.alt = "Art";
+            thumbImg.style.width = "30px";
+            thumbImg.style.cursor = "pointer";
+            thumbImg.style.verticalAlign = "middle";
+
+            const nameSpan = document.createElement("span");
+            nameSpan.textContent = " " + cardName;
+
+            wrapSpan.appendChild(thumbImg);
+            wrapSpan.appendChild(nameSpan);
+            nameTd.appendChild(wrapSpan);
+
+            if (!popupImageEl) {
+                popupImageEl = document.createElement("img");
+                popupImageEl.style.position = "absolute";
+                popupImageEl.style.zIndex = "9999";
+                popupImageEl.style.display = "none";
+                popupImageEl.style.border = "1px solid #ccc";
+                popupImageEl.style.backgroundColor = "#fff";
+                document.body.appendChild(popupImageEl);
+            }
+
+            thumbImg.addEventListener("mouseenter", (e) => {
+                if (!normalUrl) return;
+                popupImageEl.src = normalUrl;
+                popupImageEl.style.display = "block";
+                popupImageEl.style.width = "260px";
+                popupImageEl.style.height = "auto";
+
+                popupImageEl.style.left = "-9999px";
+                popupImageEl.style.top = "-9999px";
+
+                popupImageEl.onload = () => {
+                    const h = popupImageEl.offsetHeight;
+                    const rect = e.target.getBoundingClientRect();
+                    const x = rect.right, y = rect.top;
+                    const sx = window.scrollX || 0, sy = window.scrollY || 0;
+
+                    popupImageEl.style.left = (sx + x + 10) + "px";
+                    popupImageEl.style.top = (sy + y - h + 5) + "px";
+                };
+            });
+            thumbImg.addEventListener("mouseleave", () => {
+                popupImageEl.style.display = "none";
+            });
+        }
+
+        // QTY input
+        const qtyTd = document.createElement("td");
+        qtyTd.innerHTML = `
+    <input type="number" class="form-control qty-input" min="0" value="${cardObj.count}">
+  `;
+
+        // set code
+        const setTd = document.createElement("td");
+        setTd.textContent = cardObj.edition || "";
+
+        // collector #
+        const collTd = document.createElement("td");
+        collTd.textContent = cardObj.collector_number || "";
+
+        // Foil
+        const foilTd = document.createElement("td");
+        foilTd.innerHTML = `
+    <input type="checkbox" class="form-check-input foil-checkbox"
+           ${cardObj.foil ? "checked" : ""}>
+  `;
+
+        // Proxy
+        const proxyTd = document.createElement("td");
+        proxyTd.innerHTML = `
+    <input type="checkbox" class="form-check-input proxy-checkbox"
+           ${cardObj.proxy ? "checked" : ""}>
+  `;
+
+        // Unit Price
+        const unitTd = document.createElement("td");
+        unitTd.classList.add("unit-price-cell");
+        unitTd.textContent = "0.00";
+
+        // Total Price
+        const totalTd = document.createElement("td");
+        totalTd.classList.add("total-price-cell");
+        totalTd.textContent = "0.00";
+
+        // CardMarket link
+        const cmTd = document.createElement("td");
+        // If we have a cardmarket link, create an anchor
+        if (cardObj.cardmarketUrl) {
+            const a = document.createElement("a");
+            a.href = cardObj.cardmarketUrl;
+            a.target = "_blank";
+            a.title = "Open on CardMarket";
+            a.textContent = "🛒";  // or any icon you like
+            cmTd.appendChild(a);
+        }
+
+        tr.appendChild(qtyTd);
+        tr.appendChild(nameTd);
+        tr.appendChild(setTd);
+        tr.appendChild(collTd);
+        tr.appendChild(foilTd);
+        tr.appendChild(proxyTd);
+        tr.appendChild(unitTd);
+        tr.appendChild(totalTd);
+        tr.appendChild(cmTd);
+
+        tbody.appendChild(tr);
+
+        // scroll to bottom
+        const tableWrapper = document.getElementById("cardsTableWrapper");
+        tableWrapper.scrollTop = tableWrapper.scrollHeight;
+
+        updateRowPrices(cardObj, tr);
+        return tr;
+    }
+
+    // GET /cards/<setCode>/<cardNumber>
+    async function fetchCardBySetAndNumber(setCode, cardNumber) {
+        const url = `https://api.scryfall.com/cards/${setCode}/${cardNumber}`;
+        const resp = await fetch(url, {
+            headers: {
+                "User-Agent": "CardImporterTool/1.0",
+                "Accept": "application/json"
+            }
+        });
+        if (!resp.ok) {
+            throw new Error(`Scryfall error (set+number) ${resp.status}`);
+        }
+        return await resp.json();
+    }
+
+    // GET /cards/search?q=name:"foo" year:XXXX
+    async function fetchCardByNameYear(name, year) {
+        const safeName = name.trim().replace(/"/g, '\\"'); // escape any quotes
+        let query = `name:"${safeName}"`;
+        if (year) {
+            query += ` year:${year}`;
+        }
+        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&include_multilingual=1`;
+
+        const resp = await fetch(url, {
+            headers: {
+                "User-Agent": "CardImporterTool/1.0",
+                "Accept": "application/json"
+            }
+        });
+        if (!resp.ok) {
+            throw new Error(`Scryfall error (search) ${resp.status}`);
+        }
+        const data = await resp.json();
+        if (!data.data || data.data.length === 0) {
+            throw new Error(`No results for query: ${query}`);
+        }
+        return data.data[0];
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // Page Setup + Event Handlers
+    ////////////////////////////////////////////////////////////////////////////////
+    document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("setNumberInput").focus();
+
+        // Toggle
+        document.querySelectorAll("input[name='modeToggle']").forEach(radio => {
+            radio.addEventListener("change", handleModeToggle);
+        });
+
+        // “Add Card” button
+        document.getElementById("addCardBtn").addEventListener("click", handleAddCard);
+
+        // Pressing Enter on setNumber, cardName, year, or cardQty -> handleAddCard
+        ["setNumberInput", "cardNameInput", "yearInput", "cardQty"].forEach(id => {
+            const el = document.getElementById(id);
+            el.addEventListener("keypress", (e) => {
+                if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddCard();
+                }
+            });
+        });
+
+        // Export CSV
+        document.getElementById("exportCsvBtn").addEventListener("click", handleExportCsv);
+
+        // table changes
+        document.getElementById("cardsTable").addEventListener("change", handleRowChange);
+    });
+
+    function handleModeToggle() {
+        const mode = getCurrentMode();
+        if (mode === "setNumber") {
+            document.getElementById("setNumberRow").style.display = "";
+            document.getElementById("nameYearRow").style.display = "none";
+            document.getElementById("setNumberInput").focus();
+        } else {
+            document.getElementById("setNumberRow").style.display = "none";
+            document.getElementById("nameYearRow").style.display = "";
+            document.getElementById("cardNameInput").focus();
+        }
+    }
+
+    function getCurrentMode() {
+        return document.getElementById("modeSetNumber").checked ? "setNumber" : "nameYear";
+    }
+
+    async function handleAddCard() {
+        hideToast();
+
+        const countVal = parseInt(document.getElementById("cardQty").value, 10);
+        const foil = document.getElementById("foilToggle").checked;
+        const proxy = document.getElementById("proxyToggle").checked;
+        const lockEdition = document.getElementById("lockEditionToggle").checked;
+
+        if (isNaN(countVal) || countVal < 1) {
+            showToast("Invalid quantity");
+            return;
+        }
+
+        let foundCard = null;
+        try {
+            const mode = getCurrentMode();
+            if (mode === "setNumber") {
+                const raw = document.getElementById("setNumberInput").value.trim();
+                if (!raw) {
+                    showToast("Please enter set+number");
+                    return;
+                }
+
+                const parsed = parseSetNumberInput(raw);
+                foundCard = await fetchCardBySetAndNumber(parsed.setCode, parsed.collectorNumber);
+
+                let cmUrl = foundCard.purchase_uris?.cardmarket || "";
+                const cardObj = buildCardObjFromApi(foundCard, foil, proxy, countVal, cmUrl);
+
+                addOrMergeCard(cardObj);
+
+                // If lockEdition => do NOT clear the set code
+                // If not => clear entire input
+                if (lockEdition) {
+                    document.getElementById("setNumberInput").value = parsed.setCode;
+                } else {
+                    document.getElementById("setNumberInput").value = "";
+                }
+                document.getElementById("setNumberInput").focus();
+
+            } else {
+                // nameYear
+                const nameVal = document.getElementById("cardNameInput").value.trim();
+                let yearVal = document.getElementById("yearInput").value.trim();
+                if (!nameVal) {
+                    showToast("Please enter a card name");
+                    return;
+                }
+
+                // If yearVal is 1–2 digits => interpret
+                if (yearVal) {
+                    const shortY = parseInt(yearVal, 10);
+                    if (!isNaN(shortY) && shortY > 0 && shortY <= 99) {
+                        if (shortY < 93) {
+                            yearVal = 2000 + shortY;
+                        } else {
+                            yearVal = 1900 + shortY;
+                        }
+                    }
+                }
+
+                foundCard = await fetchCardByNameYear(nameVal, yearVal);
+
+                let cmUrl = foundCard.purchase_uris?.cardmarket || "";
+                const cardObj = buildCardObjFromApi(foundCard, foil, proxy, countVal, cmUrl);
+                addOrMergeCard(cardObj);
+
+                // reset fields
+                document.getElementById("cardNameInput").value = "";
+                document.getElementById("yearInput").value = "";
+                document.getElementById("cardNameInput").focus();
+            }
+        } catch (err) {
+            console.error(err);
+            showToast(err.message || "Error fetching card from Scryfall");
+            return;
+        }
+
+        // reset quantity after success
+        document.getElementById("cardQty").value = 1;
+    }
+
+    function buildCardObjFromApi(apiCard, foil, proxy, countVal, cardmarketUrl) {
+        const eurNonFoil = parseFloat(apiCard.prices.eur || "0.00") || 0;
+        const eurFoil = parseFloat(apiCard.prices.eur_foil || apiCard.prices.eur || "0.00") || 0;
+        let artCrop = "";
+        let normalImg = "";
+        if (apiCard.image_uris) {
+            artCrop = apiCard.image_uris.art_crop || "";
+            normalImg = apiCard.image_uris.normal || "";
+        }
+
+        return {
+            name: apiCard.name,
+            edition: (apiCard.set || "").toUpperCase(),
+            collector_number: apiCard.collector_number || "",
+            foil,
+            proxy,
+            count: countVal,
+            eurNonFoil,
+            eurFoil,
+            artCropUrl: artCrop,
+            normalUrl: normalImg,
+            cardmarketUrl // stored from purchase_uris
+        };
+    }
+
+    function handleRowChange(e) {
+        const tr = e.target.closest("tr");
+        if (!tr) return;
+        const oldSig = tr.dataset.sig;
+        if (!bySignature.has(oldSig)) return;
+
+        const entry = bySignature.get(oldSig);
+        const card = entry.card;
+
+        if (e.target.matches(".qty-input")) {
+            const newQty = parseInt(e.target.value, 10);
+            if (isNaN(newQty) || newQty < 0) {
+                e.target.value = card.count;
+                return;
+            }
+            if (!newQty) {
+                bySignature.delete(oldSig);
+                tr.remove();
+                updateGrandTotal();
+                return;
+            }
+            card.count = newQty;
+        }
+        if (e.target.matches(".foil-checkbox")) {
+            card.foil = e.target.checked;
+        }
+        if (e.target.matches(".proxy-checkbox")) {
+            card.proxy = e.target.checked;
+        }
+
+        const newSig = makeSignature(card);
+        if (newSig === oldSig) {
+            updateRowPrices(card, tr);
+            updateGrandTotal();
+            return;
+        }
+
+        bySignature.delete(oldSig);
+        if (bySignature.has(newSig)) {
+            const existing = bySignature.get(newSig);
+            existing.card.count += card.count;
+            const qtyInput = existing.row.querySelector(".qty-input");
+            qtyInput.value = existing.card.count;
+            updateRowPrices(existing.card, existing.row);
+            tr.remove();
+        } else {
+            bySignature.set(newSig, entry);
+            tr.dataset.sig = newSig;
+            updateRowPrices(card, tr);
+        }
+        updateGrandTotal();
+    }
+
+    function handleExportCsv() {
+        if (!bySignature.size) {
+            showToast("No cards to export yet!");
+            return;
+        }
+        const lines = [];
+        // CSV header
+        lines.push("\"Count\",\"Name\",\"Edition\",\"Condition\",\"Language\",\"Foil\",\"Collector Number\",\"Alter\",\"Proxy\",\"Purchase Price\"");
+
+        for (const {card} of bySignature.values()) {
+            const foilVal = card.foil ? "foil" : "";
+            const proxyVal = card.proxy ? "TRUE" : "FALSE";
+            const lineItems = [
+                card.count,
+                (card.name || "").replace(/"/g, '""'),
+                (card.edition || "").replace(/"/g, '""'),
+                "NM",       // Condition
+                "English",  // Language
+                foilVal,
+                card.collector_number,
+                "",         // Alter
+                proxyVal,
+                ""          // Purchase Price
+            ];
+            lines.push(lineItems.map(x => `"${x}"`).join(","));
+        }
+        const csvContent = lines.join("\n");
+        downloadCsv(csvContent);
+    }
+
+    function downloadCsv(csvContent) {
+        const blob = new Blob([csvContent], {type: "text/csv;charset=utf-8;"});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "imported_cards.csv";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    }
+</script>
+
+</body>
+</html>
