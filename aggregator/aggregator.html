@@ -3,61 +3,68 @@
 <head>
     <meta charset="UTF-8">
     <title>Moxfield Deck Aggregator</title>
-    <link
-            href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css"
-            rel="stylesheet"
-    >
-    <link rel="stylesheet" href="aggregator.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        /* Make the results area a bit taller and scrollable if needed */
+        #outputArea {
+            min-height: 300px;
+            overflow-y: auto;
+        }
+
+        /* Spinner margin */
+        #spinner p {
+            margin-top: 0.5rem;
+        }
+
+        /* Make nav pills clickable-looking */
+        .nav-pills .nav-link {
+            cursor: pointer;
+        }
+
+        /* When we want to "gray out" the output container,
+           we disable pointer events and reduce opacity. */
+        .disabledOutput {
+            pointer-events: none;
+            opacity: 0.5;
+        }
+
+        /* Optional table styling overrides (Bootstrap provides table classes) */
+        table.table thead th {
+            background-color: #f8f9fa;
+        }
+    </style>
 </head>
 <body class="bg-light">
-
 <div class="container my-5">
     <h1 class="mb-4">Moxfield Deck Aggregator</h1>
-
     <div class="mb-3">
         <label for="deckUrls" class="form-label">Deck URLs (one per line):</label>
-        <textarea
-                class="form-control"
-                id="deckUrls"
-                rows="5"
-                placeholder="https://moxfield.com/decks/tI_2bfDSKUaZKSsmNoCOTQ
-https://moxfield.com/decks/dHKNlWHwUEeX_LnAJsBH9A"
-        ></textarea>
+        <textarea class="form-control" id="deckUrls" rows="5"
+                  placeholder="https://moxfield.com/decks/tI_2bfDSKUaZKSsmNoCOTQ
+https://moxfield.com/decks/dHKNlWHwUEeX_LnAJsBH9A"></textarea>
     </div>
-
     <div class="mb-3">
         <label for="collectionFile" class="form-label">Moxfield CSV Collection:</label>
-        <input
-                type="file"
-                class="form-control"
-                id="collectionFile"
-                accept=".csv"
-        />
-        <div class="form-text">Select the exported CSV from your Moxfield collection. This will make the 'Missing Cards' outputs useful.</div>
+        <input type="file" class="form-control" id="collectionFile" accept=".csv">
+        <div class="form-text">
+            Select the exported CSV from your Moxfield collection. This will make the 'Missing Cards' outputs useful.
+        </div>
     </div>
-
-    <button id="runAggregator" class="btn btn-primary" disabled>
-        Run Aggregator
-    </button>
-
+    <button id="runAggregator" class="btn btn-primary" disabled>Run Aggregator</button>
     <div id="spinner" class="text-center mt-4" style="display: none;">
         <div class="spinner-border text-primary" role="status"></div>
         <p>Processing...</p>
     </div>
-
-    <!--
-      We wrap both the nav pills and the output area in a container so we can
-      "gray them out" together by adding a special class (#outputsContainer).
-    -->
+    <!-- Wrap nav pills and output area so they can be grayed out together -->
     <div id="outputsContainer" class="my-4 disabledOutput">
         <!-- Tab navigation -->
         <div class="d-flex align-items-center mb-3">
             <ul class="nav nav-pills" id="outputTabs">
                 <li class="nav-item">
-                    <button class="nav-link active" data-mode="aggregated">Aggregated</button>
+                    <button class="nav-link active" data-mode="aggregated">Required Cards (Aggregated)</button>
                 </li>
                 <li class="nav-item">
-                    <button class="nav-link" data-mode="simple">Simple</button>
+                    <button class="nav-link" data-mode="simple">Required Cards (Simplified)</button>
                 </li>
                 <li class="nav-item">
                     <button class="nav-link" data-mode="missingVerbose">Missing Cards (Verbose)</button>
@@ -66,25 +73,405 @@ https://moxfield.com/decks/dHKNlWHwUEeX_LnAJsBH9A"
                     <button class="nav-link" data-mode="missingExport">Missing Cards (Export Friendly)</button>
                 </li>
             </ul>
-
-            <button id="copyOutput" class="btn btn-secondary ms-3" disabled>Copy Output</button>
         </div>
-
         <div class="card">
             <div class="card-body">
                 <pre id="outputArea" class="mb-0"></pre>
             </div>
         </div>
     </div>
-
 </div>
-
+<!-- jQuery and Bootstrap JS -->
 <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
-<script
-        src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"
-></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Global variables to store aggregated deck data and collection data for verbose and export updates.
+    let aggregatedDataGlobal = null;
+    let ownedCardsGlobal = null;
+    let outputCache = {
+        aggregated: "",      // HTML table
+        simple: "",          // HTML table
+        missingExport: ""    // text (fallback cache)
+    };
 
-<script src="aggregator.js"></script>
+    function escapeHtml(str) {
+        return str
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
 
+    async function getDeckJson(deckId) {
+        const targetUrl = `https://api.moxfield.com/v2/decks/all/${deckId}`;
+        const corsProxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(targetUrl)}`;
+        const response = await fetch(corsProxyUrl);
+        if (!response.ok) {
+            throw new Error(`CORS proxy error: ${response.status}`);
+        }
+        return await response.json();
+    }
+
+    // Group deck cards into { cardName: totalQty }
+    function groupDeckCards(deckData) {
+        function toCards(rawObj) {
+            if (!rawObj) return [];
+            return Object.entries(rawObj).map(([cardName, attr]) => {
+                const quantity = attr.quantity || 0;
+                const cardLayout = attr.card?.layout || "";
+                let finalName = cardName;
+                if (!["split", "adventure"].includes(cardLayout)) {
+                    finalName = cardName.split(" // ")[0];
+                }
+                return {name: finalName, quantity};
+            });
+        }
+
+        const mainboard = toCards(deckData.mainboard);
+        const commanders = toCards(deckData.commanders);
+        const counts = {};
+        for (const c of [...mainboard, ...commanders]) {
+            if (!counts[c.name]) counts[c.name] = 0;
+            counts[c.name] += c.quantity;
+        }
+        return counts;
+    }
+
+    // Parse CSV into { cardName: { real, proxy } }
+    function parseCollectionCsv(csvText) {
+        const lines = csvText.split(/\r?\n/);
+        lines.shift(); // skip header
+        const owned = {};
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            const fields = line.split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/);
+            if (fields.length < 12) continue;
+            const countStr = fields[0].replace(/"/g, "").trim();
+            const cardNameRaw = fields[2].replace(/"/g, "").trim();
+            const proxyStr = fields[11].replace(/"/g, "").trim();
+            const count = parseInt(countStr, 10);
+            if (isNaN(count)) continue;
+            const cardName = cardNameRaw.split(" // ")[0];
+            if (!owned[cardName]) {
+                owned[cardName] = {real: 0, proxy: 0};
+            }
+            if (proxyStr.toLowerCase() === "true") {
+                owned[cardName].proxy += count;
+            } else {
+                owned[cardName].real += count;
+            }
+        }
+        return owned;
+    }
+
+    // Build Aggregated Table HTML
+    function buildAggregatedTableHtml(aggregated) {
+        let html = `<table class="table table-bordered table-striped">
+      <thead>
+        <tr>
+          <th>Card Name</th>
+          <th>Decks</th>
+          <th>Quantity</th>
+        </tr>
+      </thead>
+      <tbody>`;
+        const sortedNames = Object.keys(aggregated).sort();
+        for (const cardName of sortedNames) {
+            const data = aggregated[cardName];
+            const decksAbbr = Array.from(data.decks).sort().join(", ");
+            html += `
+        <tr>
+          <td>${escapeHtml(cardName)}</td>
+          <td>${escapeHtml(decksAbbr)}</td>
+          <td>${data.quantity}</td>
+        </tr>`;
+        }
+        html += `</tbody></table>`;
+        return html;
+    }
+
+    // Build Simplified Table HTML
+    function buildSimpleTableHtml(aggregated) {
+        let html = `<table class="table table-bordered table-striped">
+      <thead>
+        <tr>
+          <th>Card Name</th>
+          <th>Quantity</th>
+        </tr>
+      </thead>
+      <tbody>`;
+        const sortedNames = Object.keys(aggregated).sort();
+        for (const cardName of sortedNames) {
+            const data = aggregated[cardName];
+            html += `
+        <tr>
+          <td>${escapeHtml(cardName)}</td>
+          <td>${data.quantity}</td>
+        </tr>`;
+        }
+        html += `</tbody></table>`;
+        return html;
+    }
+
+    // Build Missing Cards (Verbose) Table with proxy details.
+    // Mode "real" considers only real cards; mode "proxy" uses total (real + proxy)
+    function buildMissingVerboseTableHtml(aggregated, owned, mode) {
+        let html = `<table class="table table-bordered table-striped">
+      <thead>
+        <tr>
+          <th>Card Name</th>
+          <th>Missing</th>
+          <th>Decks</th>
+          <th>Required</th>
+          <th>Have - Real</th>
+          <th>Have - Proxy</th>
+          <th>Have - Total</th>
+        </tr>
+      </thead>
+      <tbody>`;
+        const sortedNames = Object.keys(aggregated).sort();
+        let missingAny = false;
+        for (const cardName of sortedNames) {
+            const data = aggregated[cardName];
+            const needed = data.quantity;
+            const real = owned[cardName] ? owned[cardName].real : 0;
+            const proxy = owned[cardName] ? owned[cardName].proxy : 0;
+            const total = real + proxy;
+            let missing;
+            if (mode === "real") {
+                if (real < needed) {
+                    missing = needed - real;
+                } else {
+                    continue;
+                }
+            } else { // mode === "proxy"
+                if (total < needed) {
+                    missing = needed - total;
+                } else {
+                    continue;
+                }
+            }
+            missingAny = true;
+            const deckStr = Array.from(data.decks).sort().join(", ");
+            html += `
+        <tr>
+          <td>${escapeHtml(cardName)}</td>
+          <td>${missing}</td>
+          <td>${escapeHtml(deckStr)}</td>
+          <td>${needed}</td>
+          <td>${real}</td>
+          <td>${proxy}</td>
+          <td>${total}</td>
+        </tr>`;
+        }
+        if (!missingAny) {
+            html += `
+        <tr>
+          <td colspan="7">Great! You appear to have at least enough copies of all needed cards.</td>
+        </tr>`;
+        }
+        html += `</tbody></table>`;
+        return html;
+    }
+
+    // Build Missing Cards (Export Friendly) text with mode support.
+    // Mode "real" considers only real cards; mode "proxy" uses total (real + proxy)
+    function buildMissingExportTextWithMode(aggregated, owned, mode) {
+        let lines = [];
+        let missingAny = false;
+        const sortedNames = Object.keys(aggregated).sort();
+        for (const cardName of sortedNames) {
+            const data = aggregated[cardName];
+            const needed = data.quantity;
+            const real = owned[cardName] ? owned[cardName].real : 0;
+            const proxy = owned[cardName] ? owned[cardName].proxy : 0;
+            const total = real + proxy;
+            if (mode === "real") {
+                if (real < needed) {
+                    missingAny = true;
+                    lines.push(`${needed - real} ${cardName}`);
+                }
+            } else { // mode === "proxy"
+                if (total < needed) {
+                    missingAny = true;
+                    lines.push(`${needed - total} ${cardName}`);
+                }
+            }
+        }
+        if (!missingAny) {
+            lines.push("Great! You appear to have at least enough copies of all needed cards.");
+        }
+        return lines.join("\n");
+    }
+
+    // Update the Missing Cards (Verbose) Table based on selected mode.
+    function updateMissingVerboseTable() {
+        const mode = $('input[name="missingMode"]:checked').val();
+        const html = buildMissingVerboseTableHtml(aggregatedDataGlobal, ownedCardsGlobal, mode);
+        $("#missingVerboseTable").html(html);
+    }
+
+    // Build the container for Missing Cards (Verbose) with radio buttons and tooltip.
+    function updateMissingVerboseContainer() {
+        const html = `
+      <div id="missingVerboseOptions" class="mb-3 d-flex align-items-center">
+        <label class="form-label me-2 mb-0">Counting Mode:</label>
+        <div class="btn-group" role="group" aria-label="Counting Mode">
+          <input type="radio" class="btn-check" name="missingMode" id="missingModeReal" value="real" autocomplete="off">
+          <label class="btn btn-outline-primary" for="missingModeReal">Real cards only</label>
+          <input type="radio" class="btn-check" name="missingMode" id="missingModeProxy" value="proxy" autocomplete="off" checked>
+          <label class="btn btn-outline-primary" for="missingModeProxy">Use proxy</label>
+        </div>
+        <span class="ms-2 text-primary" style="cursor: pointer;" data-bs-toggle="tooltip" title="‘Real cards only’ counts only your actual cards; ‘Use proxy’ counts your real cards plus any proxies you have.">?</span>
+      </div>
+      <div id="missingVerboseTable"></div>
+    `;
+        $("#outputArea").html(html);
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        $('input[name="missingMode"]').change(updateMissingVerboseTable);
+        updateMissingVerboseTable();
+    }
+
+    // Update the Missing Cards (Export Friendly) text based on the selected mode.
+    function updateMissingExportText() {
+        const mode = $('input[name="exportMode"]:checked').val();
+        const text = buildMissingExportTextWithMode(aggregatedDataGlobal, ownedCardsGlobal, mode);
+        $("#missingExportText").text(text);
+    }
+
+    // Build the container for Missing Cards (Export Friendly) with radio buttons, tooltip, and a copy button.
+    function updateMissingExportContainer() {
+        const html = `
+      <div id="missingExportOptions" class="mb-3 d-flex align-items-center">
+        <label class="form-label me-2 mb-0">Counting Mode:</label>
+        <div class="btn-group" role="group" aria-label="Counting Mode">
+          <input type="radio" class="btn-check" name="exportMode" id="exportModeReal" value="real" autocomplete="off">
+          <label class="btn btn-outline-primary" for="exportModeReal">Real cards only</label>
+          <input type="radio" class="btn-check" name="exportMode" id="exportModeProxy" value="proxy" autocomplete="off" checked>
+          <label class="btn btn-outline-primary" for="exportModeProxy">Use proxy</label>
+        </div>
+        <span class="ms-2 text-primary" style="cursor: pointer;" data-bs-toggle="tooltip" title="‘Real cards only’ counts only your actual cards; ‘Use proxy’ counts your real cards plus any proxies you have.">?</span>
+      </div>
+      <button id="missingExportCopy" class="btn btn-secondary mb-3" data-bs-toggle="tooltip" title="Copy card list to clipboard">Copy List</button>
+      <div id="missingExportText" style="white-space: pre-wrap;"></div>
+    `;
+        $("#outputArea").html(html);
+        var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        $('input[name="exportMode"]').change(updateMissingExportText);
+        updateMissingExportText();
+
+        // Bind copy button event to copy only the card list text.
+        $('#missingExportCopy').click(function () {
+            const textToCopy = $('#missingExportText').text();
+            if (!textToCopy.trim()) {
+                alert("There is no card list to copy!");
+                return;
+            }
+            navigator.clipboard.writeText(textToCopy).then(() => {
+                alert("Card list copied to clipboard!");
+            }, err => {
+                alert("Failed to copy text: " + err);
+            });
+        });
+    }
+
+    $(document).ready(function () {
+        function toggleRunButton() {
+            const deckUrls = $("#deckUrls").val().trim();
+            $("#runAggregator").prop("disabled", deckUrls.length === 0);
+        }
+
+        $("#deckUrls").on("input", toggleRunButton);
+        toggleRunButton();
+
+        $("#outputTabs button.nav-link").on("click", function () {
+            $("#outputTabs button.nav-link").removeClass("active");
+            $(this).addClass("active");
+            const mode = $(this).data("mode");
+            if (mode === "missingExport") {
+                updateMissingExportContainer();
+            } else if (mode === "missingVerbose") {
+                updateMissingVerboseContainer();
+            } else {
+                $("#outputArea").html(outputCache[mode] || "<p>No data available yet.</p>");
+            }
+        });
+
+        $("#runAggregator").on("click", async function () {
+            outputCache = {
+                aggregated: "",
+                simple: "",
+                missingExport: ""
+            };
+            $("#outputArea").text("");
+            $("#outputsContainer").addClass("disabledOutput");
+            $("#spinner").show();
+
+            try {
+                const deckUrlLines = $("#deckUrls").val().trim().split("\n");
+                let collectionCsvText = "";
+                const fileInput = $("#collectionFile")[0];
+                if (fileInput.files && fileInput.files[0]) {
+                    collectionCsvText = await fileInput.files[0].text();
+                }
+                const ownedCards = collectionCsvText ? parseCollectionCsv(collectionCsvText) : {};
+                const aggregatedData = {}; // { cardName: { quantity, decks: Set<string> } }
+                async function aggregateDeck(url) {
+                    const match = url.match(/\/decks\/(?:all\/)?([A-Za-z0-9_-]+)/);
+                    if (!match) {
+                        throw new Error("Invalid Moxfield deck URL: " + url);
+                    }
+                    const deckId = match[1];
+                    const deckJson = await getDeckJson(deckId);
+                    console.log("Fetched deck:", deckId, deckJson);
+                    let deckAbbr = deckJson.name ? deckJson.name.split(" ")[0] : "Deck";
+                    if (deckJson.commanders) {
+                        const commanderNames = Object.keys(deckJson.commanders);
+                        if (commanderNames.length > 0) {
+                            deckAbbr = commanderNames[0].split(" ")[0];
+                        }
+                    }
+                    deckAbbr = deckAbbr.replace(",", "");
+                    const groupedCounts = groupDeckCards(deckJson);
+                    for (const [cardName, qty] of Object.entries(groupedCounts)) {
+                        if (!aggregatedData[cardName]) {
+                            aggregatedData[cardName] = {quantity: 0, decks: new Set()};
+                        }
+                        aggregatedData[cardName].quantity += qty;
+                        aggregatedData[cardName].decks.add(deckAbbr);
+                    }
+                }
+
+                for (const url of deckUrlLines) {
+                    const trimmed = url.trim();
+                    if (!trimmed) continue;
+                    await aggregateDeck(trimmed);
+                }
+
+                outputCache.aggregated = buildAggregatedTableHtml(aggregatedData);
+                outputCache.simple = buildSimpleTableHtml(aggregatedData);
+                outputCache.missingExport = buildMissingExportTextWithMode(aggregatedData, ownedCards, "proxy");
+                aggregatedDataGlobal = aggregatedData;
+                ownedCardsGlobal = ownedCards;
+
+                $("#outputTabs button.nav-link").removeClass("active");
+                $("#outputTabs button[data-mode='aggregated']").addClass("active");
+                $("#outputArea").html(outputCache["aggregated"]);
+            } catch (err) {
+                console.error("Aggregator error:", err);
+                $("#outputArea").text("Error: " + err.message);
+            } finally {
+                $("#spinner").hide();
+                $("#outputsContainer").removeClass("disabledOutput");
+            }
+        });
+    });
+</script>
 </body>
 </html>
