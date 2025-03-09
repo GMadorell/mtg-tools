@@ -15,8 +15,8 @@
 
         #cardsTableWrapper {
             max-height: 300px; /* keep vertical scroll if table is tall */
-            overflow-y: auto; /* vertical scrollbar */
-            overflow-x: visible; /* allow horizontal content (the hover image) to overflow */
+            overflow-y: auto;
+            overflow-x: visible; /* allow horizontal overflow if needed */
             margin-top: 1rem;
         }
 
@@ -25,7 +25,7 @@
             top: 1rem;
             right: 1rem;
             min-width: 250px;
-            z-index: 1060; /* above typical modals */
+            z-index: 1060;
         }
 
         /* Make quantity inputs narrower */
@@ -38,7 +38,7 @@
             vertical-align: middle !important;
         }
 
-        /* For small icon + hover preview of big image */
+        /* For small icon + hover preview in aggregator table */
         .card-image-wrapper {
             position: relative;
             display: inline-block;
@@ -62,6 +62,54 @@
         .card-image-wrapper:hover .card-image-hover {
             display: block;
         }
+
+        /* For the modal list of multiple results, using a Bootstrap card layout */
+        /* We'll put them in a row with card columns, letting them wrap. */
+        .card-list-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        /* Each card is clickable for adding the version */
+        .card-result {
+            width: 240px; /* or whatever max width you prefer */
+            cursor: pointer;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            overflow: hidden;
+            transition: box-shadow 0.2s;
+        }
+
+        .card-result:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+        }
+
+        .card-result img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        .card-result-body {
+            padding: 8px;
+        }
+
+        .card-result-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .card-result-meta {
+            font-size: 0.9rem;
+            color: #555;
+            margin-bottom: 8px;
+        }
+
+        .card-result-small {
+            font-size: 0.85rem;
+            color: #777;
+        }
     </style>
 </head>
 <body>
@@ -69,11 +117,17 @@
 <div class="container my-4">
     <h1>Card Importer Tool</h1>
     <p>
-        Enter a set code, followed by the collector number – e.g. <code>kld247</code> or <code>khc082</code>.<br>
-        For cards without set code and card number, switch to “Name + Year”.<br>
-        Toggle foil/proxy/language if needed, set quantity, then press “Enter” or click “Add”.<br>
-        You can edit quantity/foil/proxy/language in the table. If quantity goes to 0, that row is removed.<br>
-        If two rows become the same after editing (same set code, collector #, foil, proxy, language), they merge.<br>
+        Enter a set code + collector number (e.g. <code>kld247</code> or <code>khc082</code>),
+        or switch to “Name + Year” if the card has no set code and number.
+        <br>
+        Toggle foil/proxy/language if needed, set quantity, then press “Enter” or click “Add”.
+        <br>
+        If multiple results appear for a name/year search, you can pick which version from a modal with card images.
+        <br>
+        You can also edit quantity, foil, proxy, language in the table. If quantity goes to 0, that row is removed.
+        <br>
+        If two rows become the same (set code, number, foil, proxy, language), they merge.
+        <br>
         Prices come from Scryfall in EUR.
     </p>
 
@@ -89,7 +143,7 @@
     </span>
     </p>
 
-    <!-- MODE A: Set + Number row -->
+    <!-- MODE A: Set + Number -->
     <div id="setNumberRow" class="row g-2 align-items-end">
         <div class="col-sm-4">
             <label for="setNumberInput" class="form-label">Set Code + Number</label>
@@ -102,7 +156,7 @@
         </div>
     </div>
 
-    <!-- MODE B: Name + Year row -->
+    <!-- MODE B: Name + Year -->
     <div id="nameYearRow" class="row g-2 align-items-end" style="display: none;">
         <div class="col-sm-4">
             <label for="cardNameInput" class="form-label">Card Name</label>
@@ -124,7 +178,7 @@
         </div>
     </div>
 
-    <!-- Shared row: quantity, add button -->
+    <!-- Row for quantity & add button -->
     <div class="row g-2 align-items-end mt-2">
         <div class="col-sm-1">
             <label for="cardQty" class="form-label">Quantity</label>
@@ -173,7 +227,6 @@
         <div class="col-sm-3">
             <label for="languageSelect" class="form-label">Language</label>
             <select class="form-select" id="languageSelect">
-                <!-- Some flags next to text (using emojis). Modify as needed. -->
                 <option value="en" selected>🇬🇧 English</option>
                 <option value="es">🇪🇸 Spanish</option>
                 <option value="fr">🇫🇷 French</option>
@@ -195,10 +248,12 @@
         </div>
     </div>
 
+    <!-- Export Button -->
     <button class="btn btn-success mt-3" id="exportCsvBtn">
         Export to Moxfield CSV
     </button>
 
+    <!-- The aggregator table -->
     <div id="cardsTableWrapper">
         <table class="table table-striped mt-3" id="cardsTable">
             <thead>
@@ -244,6 +299,30 @@
     </div>
 </div>
 
+<!-- The Modal for multiple matches -->
+<div class="modal fade" id="multipleResultsModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-xl">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Multiple Matches Found</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p>We found multiple possible versions. Please pick one:</p>
+                <!-- We'll put them in a row so we can do a “card” layout grid -->
+                <div class="card-list-row" id="multipleResultsContainer">
+                    <!-- We'll fill this dynamically with “cards” -->
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Bootstrap + Dependencies -->
 <script src="https://code.jquery.com/jquery-3.6.4.min.js"></script>
 <script
@@ -257,6 +336,7 @@
 
     const bySignature = new Map();
     let popupImageEl = null;
+    let pendingSearchContext = null; // for multiple results scenario
 
     function showToast(msg) {
         const toastEl = document.getElementById("toastContainer");
@@ -268,7 +348,7 @@
         document.getElementById("toastContainer").style.display = "none";
     }
 
-    /** Build the aggregator signature: edition, collector, foil, proxy, language */
+    /** Build aggregator signature */
     function makeSignature({edition, collector_number, foil, proxy, language}) {
         const foilPart = foil ? "1" : "0";
         const proxyPart = proxy ? "1" : "0";
@@ -276,12 +356,12 @@
         return `${(edition || "").toUpperCase()}_${collector_number}_${foilPart}_${proxyPart}_${langPart}`;
     }
 
-    /** Returns the float price for a card, depending on foil or not */
+    /** Return price for foil or nonfoil */
     function getCardPrice(cardObj) {
         return cardObj.foil ? cardObj.eurFoil : cardObj.eurNonFoil;
     }
 
-    /** Update row's unit & total price */
+    /** Update row prices */
     function updateRowPrices(cardObj, tr) {
         const unitPriceCell = tr.querySelector(".unit-price-cell");
         const totalPriceCell = tr.querySelector(".total-price-cell");
@@ -291,7 +371,7 @@
         totalPriceCell.textContent = total.toFixed(2);
     }
 
-    /** Recompute global total quantity & total price */
+    /** Recompute aggregator total */
     function updateGrandTotal() {
         let sumPrice = 0, sumCount = 0;
         for (const {card} of bySignature.values()) {
@@ -302,21 +382,17 @@
         document.getElementById("totalCards").textContent = sumCount;
     }
 
-    /** Add or merge a card into aggregator */
+    /** Add or merge a card */
     function addOrMergeCard(cardObj) {
         const sig = makeSignature(cardObj);
         if (bySignature.has(sig)) {
-            // merges
             const entry = bySignature.get(sig);
             entry.card.count += cardObj.count;
-
             const qtyInput = entry.row.querySelector(".qty-input");
             const oldVal = parseInt(qtyInput.value, 10);
             qtyInput.value = oldVal + cardObj.count;
-
             updateRowPrices(entry.card, entry.row);
         } else {
-            // create new row
             const row = createTableRow(cardObj);
             bySignature.set(sig, {card: cardObj, row});
         }
@@ -327,16 +403,10 @@
     // parseSetNumberInput
     ////////////////////////////////////////////////////////////////////////////////
     function parseSetNumberInput(raw) {
-        // e.g. "kld247" => set="kld", number="247"
-        // e.g. "mh30021" => set="mh3", number="21"
-        // e.g. "phed247" => set="phed", number="247"
-        // e.g. "khc 082" => set="khc", number="82" (if user typed a space)
         const trimmed = raw.trim();
-        if (!trimmed) {
-            throw new Error("Empty input for set+number");
-        }
+        if (!trimmed) throw new Error("Empty input for set+number");
 
-        // If there's a space => left= set code, right= number
+        // space?
         const spaceIndex = trimmed.indexOf(" ");
         if (spaceIndex >= 0) {
             const leftPart = trimmed.slice(0, spaceIndex).toUpperCase();
@@ -351,10 +421,10 @@
             };
         }
 
-        // Attempt to gather up to 4 non-digit chars from start:
+        // gather 4 non-digit
         let nonDigitCount = 0, i = 0;
         for (; i < trimmed.length && nonDigitCount < 4; i++) {
-            if (/\D/.test(trimmed[i])) { // non-digit
+            if (/\D/.test(trimmed[i])) {
                 nonDigitCount++;
             }
         }
@@ -367,11 +437,11 @@
             }
             return {
                 setCode: setCodePart,
-                collectorNumber: String(nVal)
+                collectorNumber: String(nVal),
             };
         }
 
-        // fallback => first 3 chars => set code, rest => number
+        // fallback => first3
         if (trimmed.length < 4) {
             throw new Error(`Not enough length to parse: "${trimmed}"`);
         }
@@ -383,83 +453,78 @@
         }
         return {
             setCode: set3,
-            collectorNumber: String(nVal2)
+            collectorNumber: String(nVal2),
         };
     }
 
+    /** Return short "flag + code" for language */
     function getLanguageDisplay(code) {
         switch (code) {
-            case "en":
+            case"en":
                 return "🇬🇧 EN";
-            case "es":
+            case"es":
                 return "🇪🇸 ES";
-            case "fr":
+            case"fr":
                 return "🇫🇷 FR";
-            case "de":
+            case"de":
                 return "🇩🇪 DE";
-            case "it":
+            case"it":
                 return "🇮🇹 IT";
-            case "pt":
+            case"pt":
                 return "🇵🇹 PT";
-            case "ja":
+            case"ja":
                 return "🇯🇵 JA";
-            case "ko":
+            case"ko":
                 return "🇰🇷 KO";
-            case "ru":
+            case"ru":
                 return "🇷🇺 RU";
-            case "zhs":
+            case"zhs":
                 return "🇨🇳 ZHS";
-            case "zht":
+            case"zht":
                 return "🇨🇳 ZHT";
-            case "he":
+            case"he":
                 return "🇮🇱 HE";
-            case "la":
+            case"la":
                 return "🕊 LA";
-            case "grc":
+            case"grc":
                 return "⚙ GRC";
-            case "ar":
+            case"ar":
                 return "🇸🇦 AR";
-            case "sa":
+            case"sa":
                 return "📜 SA";
-            case "ph":
+            case"ph":
                 return "⚫ PH";
             default:
-                return "🇬🇧 EN"; // fallback
+                return "🇬🇧 EN";
         }
     }
 
     ////////////////////////////////////////////////////////////////////////////////
-    // createTableRow (adds Language column)
+    // createTableRow
     ////////////////////////////////////////////////////////////////////////////////
     function createTableRow(cardObj) {
         const tbody = document.querySelector("#cardsTable tbody");
         const tr = document.createElement("tr");
-        const sig = makeSignature(cardObj);
-        tr.dataset.sig = sig;
+        tr.dataset.sig = makeSignature(cardObj);
 
         // Name cell
         const nameTd = document.createElement("td");
         if (!cardObj.artCropUrl) {
-            // no art => text
             nameTd.textContent = cardObj.name || "Unknown Card";
         } else {
-            const smallArtUrl = cardObj.artCropUrl;
-            const normalUrl = cardObj.normalUrl;
             const wrap = document.createElement("span");
             const thumb = document.createElement("img");
-            thumb.src = smallArtUrl;
+            thumb.src = cardObj.artCropUrl;
             thumb.alt = "Art";
             thumb.style.width = "30px";
             thumb.style.cursor = "pointer";
             thumb.style.verticalAlign = "middle";
-
             const nameSp = document.createElement("span");
             nameSp.textContent = " " + (cardObj.name || "Unknown Card");
             wrap.appendChild(thumb);
             wrap.appendChild(nameSp);
             nameTd.appendChild(wrap);
 
-            // big popup
             if (!popupImageEl) {
                 popupImageEl = document.createElement("img");
                 popupImageEl.style.position = "absolute";
@@ -470,8 +535,8 @@
                 document.body.appendChild(popupImageEl);
             }
             thumb.addEventListener("mouseenter", (ev) => {
-                if (!normalUrl) return;
-                popupImageEl.src = normalUrl;
+                if (!cardObj.normalUrl) return;
+                popupImageEl.src = cardObj.normalUrl;
                 popupImageEl.style.display = "block";
                 popupImageEl.style.width = "260px";
                 popupImageEl.style.height = "auto";
@@ -498,43 +563,42 @@
     <input type="number" class="form-control qty-input" min="0" value="${cardObj.count}">
   `;
 
-        // set code
+        // Set code
         const setTd = document.createElement("td");
         setTd.textContent = cardObj.edition || "";
 
-        // collector
+        // Collector #
         const collTd = document.createElement("td");
         collTd.textContent = cardObj.collector_number || "";
 
-        // foil?
+        // Foil?
         const foilTd = document.createElement("td");
         foilTd.innerHTML = `
     <input type="checkbox" class="form-check-input foil-checkbox"
       ${cardObj.foil ? "checked" : ""}>
   `;
 
-        // proxy?
+        // Proxy
         const proxyTd = document.createElement("td");
         proxyTd.innerHTML = `
     <input type="checkbox" class="form-check-input proxy-checkbox"
       ${cardObj.proxy ? "checked" : ""}>
   `;
 
-        // language
+        // Language
         const langTd = document.createElement("td");
         langTd.textContent = getLanguageDisplay(cardObj.language || "en");
 
-        // unit price
+        // Unit + Total
         const unitTd = document.createElement("td");
         unitTd.classList.add("unit-price-cell");
         unitTd.textContent = "0.00";
 
-        // total price
         const totalTd = document.createElement("td");
         totalTd.classList.add("total-price-cell");
         totalTd.textContent = "0.00";
 
-        // cardmarket link
+        // Cardmarket
         const cmTd = document.createElement("td");
         if (cardObj.cardmarketUrl) {
             const a = document.createElement("a");
@@ -545,7 +609,6 @@
             cmTd.appendChild(a);
         }
 
-        // append in correct order
         tr.appendChild(qtyTd);
         tr.appendChild(nameTd);
         tr.appendChild(setTd);
@@ -558,12 +621,9 @@
         tr.appendChild(cmTd);
 
         tbody.appendChild(tr);
-
-        // scroll
         document.getElementById("cardsTableWrapper").scrollTop =
             document.getElementById("cardsTableWrapper").scrollHeight;
 
-        // init prices
         updateRowPrices(cardObj, tr);
         return tr;
     }
@@ -571,7 +631,6 @@
     ////////////////////////////////////////////////////////////////////////////////
     // Scryfall fetch
     ////////////////////////////////////////////////////////////////////////////////
-
     async function fetchCardBySetAndNumber(setCode, collectorNumber) {
         const url = `https://api.scryfall.com/cards/${setCode}/${collectorNumber}`;
         const resp = await fetch(url, {
@@ -586,13 +645,13 @@
         return await resp.json();
     }
 
-    async function fetchCardByNameYear(name, year) {
+    async function fetchCardsByNameYear(name, year) {
         const safeName = name.trim().replace(/"/g, '\\"');
         let query = `name:"${safeName}"`;
         if (year) {
             query += ` year:${year}`;
         }
-        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&include_multilingual=1`;
+        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&include_multilingual=1&unique=art`;
 
         const resp = await fetch(url, {
             headers: {
@@ -607,25 +666,24 @@
         if (!data.data || data.data.length === 0) {
             throw new Error(`No results for: ${query}`);
         }
-        return data.data[0];
+        return data;
     }
 
     ////////////////////////////////////////////////////////////////////////////////
     // Page Setup + Handlers
     ////////////////////////////////////////////////////////////////////////////////
-
     document.addEventListener("DOMContentLoaded", () => {
         document.getElementById("setNumberInput").focus();
 
-        // mode toggle
+        // Toggle
         document.querySelectorAll("input[name='modeToggle']").forEach(radio => {
             radio.addEventListener("change", handleModeToggle);
         });
 
-        // add card button
+        // “Add Card” button
         document.getElementById("addCardBtn").addEventListener("click", handleAddCard);
 
-        // pressing Enter on setNumber, cardName, year, cardQty => handleAddCard
+        // Pressing Enter in setNumber, cardName, year, cardQty => handleAddCard
         ["setNumberInput", "cardNameInput", "yearInput", "cardQty"].forEach(id => {
             const el = document.getElementById(id);
             el.addEventListener("keypress", (e) => {
@@ -638,7 +696,7 @@
 
         document.getElementById("exportCsvBtn").addEventListener("click", handleExportCsv);
 
-        // table changes => quantity/foil/proxy/language columns
+        // table changes => quantity/foil/proxy
         document.getElementById("cardsTable").addEventListener("change", handleRowChange);
     });
 
@@ -671,25 +729,19 @@
             return;
         }
 
-        let foundCard = null;
         try {
-            const mode = getCurrentMode();
-            if (mode === "setNumber") {
+            if (getCurrentMode() === "setNumber") {
                 const raw = document.getElementById("setNumberInput").value.trim();
                 if (!raw) {
                     showToast("Please enter set+number");
                     return;
                 }
                 const parsed = parseSetNumberInput(raw);
-                foundCard = await fetchCardBySetAndNumber(parsed.setCode, parsed.collectorNumber);
+                const foundCard = await fetchCardBySetAndNumber(parsed.setCode, parsed.collectorNumber);
 
-                let cmUrl = foundCard.purchase_uris?.cardmarket || "";
-                const cardObj = buildCardObjFromApi(foundCard, foil, proxy, qty, cmUrl);
-                cardObj.language = language; // new
+                const aggregatorCard = buildAggregatorCard(foundCard, {foil, proxy, qty, language});
+                addOrMergeCard(aggregatorCard);
 
-                addOrMergeCard(cardObj);
-
-                // if lock edition => keep set code
                 if (lockEdition) {
                     document.getElementById("setNumberInput").value = parsed.setCode;
                 } else {
@@ -698,15 +750,14 @@
                 document.getElementById("setNumberInput").focus();
 
             } else {
-                // nameYear
+                // name+year => might have multiple
                 const nameVal = document.getElementById("cardNameInput").value.trim();
                 let yearVal = document.getElementById("yearInput").value.trim();
                 if (!nameVal) {
                     showToast("Please enter a card name");
                     return;
                 }
-
-                // if yearVal is 1–2 digits => interpret
+                // interpret short year
                 if (yearVal) {
                     const shortY = parseInt(yearVal, 10);
                     if (!isNaN(shortY) && shortY > 0 && shortY <= 99) {
@@ -718,33 +769,31 @@
                     }
                 }
 
-                foundCard = await fetchCardByNameYear(nameVal, yearVal);
-
-                let cmUrl = foundCard.purchase_uris?.cardmarket || "";
-                const cardObj = buildCardObjFromApi(foundCard, foil, proxy, qty, cmUrl);
-                cardObj.language = language; // new
-
-                addOrMergeCard(cardObj);
-
-                // reset fields
+                const scryData = await fetchCardsByNameYear(nameVal, yearVal);
+                const results = scryData.data;
+                if (results.length === 1) {
+                    const aggregatorCard = buildAggregatorCard(results[0], {foil, proxy, qty, language});
+                    addOrMergeCard(aggregatorCard);
+                } else {
+                    // multiple
+                    pendingSearchContext = {foil, proxy, qty, language};
+                    showMultipleResultsModal(results);
+                }
                 document.getElementById("cardNameInput").value = "";
                 document.getElementById("yearInput").value = "";
                 document.getElementById("cardNameInput").focus();
             }
-
         } catch (err) {
             console.error(err);
-            showToast(err.message || "Error fetching card from Scryfall");
-            return;
+            showToast(err.message || "Error searching Scryfall");
         }
 
-        // reset quantity
         document.getElementById("cardQty").value = 1;
     }
 
-    function buildCardObjFromApi(apiCard, foil, proxy, qty, cardmarketUrl) {
-        const eurNonFoil = parseFloat(apiCard.prices.eur || "0.00") || 0;
-        const eurFoil = parseFloat(apiCard.prices.eur_foil || apiCard.prices.eur || "0.00") || 0;
+    function buildAggregatorCard(apiCard, {foil, proxy, qty, language}) {
+        const eurNonFoil = parseFloat(apiCard.prices?.eur || "0") || 0;
+        const eurFoil = parseFloat(apiCard.prices?.eur_foil || apiCard.prices?.eur || "0") || 0;
         let art = "", norm = "";
         if (apiCard.image_uris) {
             art = apiCard.image_uris.art_crop || "";
@@ -761,11 +810,90 @@
             eurFoil,
             artCropUrl: art,
             normalUrl: norm,
-            cardmarketUrl
-            // language is appended after we return
+            cardmarketUrl: apiCard.purchase_uris?.cardmarket || "",
+            language
         };
     }
 
+    // show multiple => “card grid” layout
+    function showMultipleResultsModal(cardsArray) {
+        const container = document.getElementById("multipleResultsContainer");
+        container.innerHTML = ""; // clear old
+
+        cardsArray.forEach(apiCard => {
+            // Build a “card-result” element
+            const cardDiv = document.createElement("div");
+            cardDiv.classList.add("card-result");
+
+            // clicking anywhere => pick
+            cardDiv.addEventListener("click", (e) => {
+                pickCardFromModal(apiCard);
+            });
+
+            // large image (or normal)
+            let imgUrl = apiCard.image_uris?.normal || "";
+            if (!imgUrl) {
+                // fallback if missing
+                imgUrl = apiCard.image_uris?.large || "";
+            }
+            const img = document.createElement("img");
+            img.src = imgUrl;
+            img.alt = apiCard.name || "Card";
+            cardDiv.appendChild(img);
+
+            const bodyDiv = document.createElement("div");
+            bodyDiv.classList.add("card-result-body");
+
+            // Title
+            const title = document.createElement("div");
+            title.classList.add("card-result-title");
+            title.textContent = apiCard.name || "??";
+            bodyDiv.appendChild(title);
+
+            // meta
+            const meta = document.createElement("div");
+            meta.classList.add("card-result-meta");
+            const setName = apiCard.set_name || apiCard.set || "???";
+            const collNum = apiCard.collector_number || "???";
+            meta.textContent = `${setName} #${collNum}`;
+            bodyDiv.appendChild(meta);
+
+            // maybe release year
+            if (apiCard.released_at) {
+                const year = apiCard.released_at.split("-")[0];
+                const small = document.createElement("div");
+                small.classList.add("card-result-small");
+                small.textContent = `Released: ${year}`;
+                bodyDiv.appendChild(small);
+            }
+
+            cardDiv.appendChild(bodyDiv);
+            container.appendChild(cardDiv);
+        });
+
+        // show modal
+        const modalEl = document.getElementById("multipleResultsModal");
+        const modal = new bootstrap.Modal(modalEl);
+        modal.show();
+    }
+
+    function pickCardFromModal(apiCard) {
+        if (!pendingSearchContext) return;
+        const {foil, proxy, qty, language} = pendingSearchContext;
+        pendingSearchContext = null;
+
+        // close modal
+        const modalEl = document.getElementById("multipleResultsModal");
+        const modal = bootstrap.Modal.getInstance(modalEl);
+        if (modal) modal.hide();
+
+        const aggregatorCard = buildAggregatorCard(apiCard, {foil, proxy, qty, language});
+        addOrMergeCard(aggregatorCard);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////////
+    // table changes => quantity/foil/proxy
+    ////////////////////////////////////////////////////////////////////////////////
     function handleRowChange(e) {
         const tr = e.target.closest("tr");
         if (!tr) return;
@@ -801,13 +929,12 @@
             return;
         }
 
-        // remove old
         bySignature.delete(oldSig);
         if (bySignature.has(newSig)) {
             const existing = bySignature.get(newSig);
             existing.card.count += card.count;
-            const qtyIn = existing.row.querySelector(".qty-input");
-            qtyIn.value = existing.card.count;
+            const qtyInput = existing.row.querySelector(".qty-input");
+            qtyInput.value = existing.card.count;
             updateRowPrices(existing.card, existing.row);
             tr.remove();
         } else {
@@ -818,32 +945,33 @@
         updateGrandTotal();
     }
 
+    ////////////////////////////////////////////////////////////////////////////////
+    // Export CSV
+    ////////////////////////////////////////////////////////////////////////////////
     function handleExportCsv() {
         if (!bySignature.size) {
             showToast("No cards to export yet!");
             return;
         }
         const lines = [];
-        // CSV header: "Count","Name","Edition","Condition","Language","Foil","Collector Number","Alter","Proxy","Purchase Price"
+        // CSV header
         lines.push(`"Count","Name","Edition","Condition","Language","Foil","Collector Number","Alter","Proxy","Purchase Price"`);
 
         for (const {card} of bySignature.values()) {
             const foilVal = card.foil ? "foil" : "";
             const proxyVal = card.proxy ? "TRUE" : "FALSE";
-            // We'll use card.language for "Language" field
-            const lineItems = [
+            lines.push([
                 card.count,
                 (card.name || "").replace(/"/g, '""'),
                 (card.edition || "").replace(/"/g, '""'),
-                "NM", // Condition
-                card.language || "en", // from aggregator
+                "NM",
+                card.language || "en",
                 foilVal,
                 card.collector_number || "",
-                "",   // Alter
+                "",
                 proxyVal,
-                ""    // Purchase Price
-            ];
-            lines.push(lineItems.map(x => `"${x}"`).join(","));
+                ""
+            ].map(x => `"${x}"`).join(","));
         }
 
         const csvContent = lines.join("\n");
