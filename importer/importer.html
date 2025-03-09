@@ -651,7 +651,7 @@
         if (year) {
             query += ` year:${year}`;
         }
-        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&include_multilingual=1&unique=art`;
+        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&include_multilingual=1&unique=prints`;
 
         const resp = await fetch(url, {
             headers: {
