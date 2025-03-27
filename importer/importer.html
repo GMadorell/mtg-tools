@@ -159,7 +159,7 @@
     <!-- MODE B: Name + Year -->
     <div id="nameYearRow" class="row g-2 align-items-end" style="display: none;">
         <div class="col-sm-4">
-            <label for="cardNameInput" class="form-label">Card Name</label>
+            <label for="cardNameInput" class="form-label">Card Name (change 'Language' accordingly)</label>
             <input
                     type="text"
                     class="form-control"
@@ -645,13 +645,12 @@
         return await resp.json();
     }
 
-    async function fetchCardsByNameYear(name, year) {
-        const safeName = name.trim().replace(/"/g, '\\"');
-        let query = `name:"${safeName}"`;
-        if (year) {
-            query += ` year:${year}`;
-        }
-        const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&include_multilingual=1&unique=prints`;
+    async function fetchCardsByNameYear(name, year, languageCode) {
+        const query = buildScryfallSearchQuery(name, year, languageCode);
+
+        const url = `https://api.scryfall.com/cards/search` +
+            `?q=${encodeURIComponent(query)}` +
+            `&unique=art`;
 
         const resp = await fetch(url, {
             headers: {
@@ -662,11 +661,27 @@
         if (!resp.ok) {
             throw new Error(`Scryfall error (search) ${resp.status}`);
         }
+
         const data = await resp.json();
         if (!data.data || data.data.length === 0) {
             throw new Error(`No results for: ${query}`);
         }
-        return data;
+        return data; // might have multiple matches
+    }
+
+    function buildScryfallSearchQuery(name, year, languageCode) {
+        const safeName = name.trim().replace(/"/g, '\\"');
+        let query = `name:"${safeName}"`;
+
+        if (year) {
+            query += ` year:${year}`;
+        }
+
+        if (languageCode && languageCode !== "any") {
+            query += ` lang:${languageCode}`;
+        }
+
+        return query;
     }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -769,7 +784,7 @@
                     }
                 }
 
-                const scryData = await fetchCardsByNameYear(nameVal, yearVal);
+                const scryData = await fetchCardsByNameYear(nameVal, yearVal, language);
                 const results = scryData.data;
                 if (results.length === 1) {
                     const aggregatorCard = buildAggregatorCard(results[0], {foil, proxy, qty, language});
