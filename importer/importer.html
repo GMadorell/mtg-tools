@@ -904,6 +904,8 @@
 
         const aggregatorCard = buildAggregatorCard(apiCard, {foil, proxy, qty, language});
         addOrMergeCard(aggregatorCard);
+
+        document.getElementById("cardNameInput").focus();
     }
 
     ////////////////////////////////////////////////////////////////////////////////
@@ -1003,6 +1005,13 @@
         a.click();
         document.body.removeChild(a);
     }
+
+    window.addEventListener("beforeunload", (e) => {
+        if (bySignature.size > 0) {
+            e.preventDefault();
+            e.returnValue = "Are you sure you want to leave? Your deck data will be lost.";
+        }
+    });
 </script>
 
 </body>
